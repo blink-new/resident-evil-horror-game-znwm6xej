@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useEffect, useState } from 'react'
+import { AnimatePresence } from 'framer-motion'
 import { useGame } from '../context/GameContext'
-import { Player } from './Player'
-import { Zombie } from './Zombie'
-import { Room } from './Room'
+import { RoomFP } from './RoomFP'
+import { ZombieFP } from './ZombieFP'
+import { PlayerGun } from './PlayerGun'
+import { useFPCamera } from '../hooks/useFPCamera'
 import { useGameControls } from '../hooks/useGameControls'
 import { spawnZombies, updateZombieAI } from '../utils/zombieUtils'
-import { checkCollisions } from '../utils/gameUtils'
 import { useToast } from '../hooks/use-toast'
 
 interface GameScreenProps {
@@ -16,12 +16,10 @@ interface GameScreenProps {
 export function GameScreen({ onGameOver }: GameScreenProps) {
   const { state, updatePlayer, updateZombies, damagePlayer, dispatch, addScore } = useGame()
   const { player, zombies, difficulty } = state
-  const gameAreaRef = useRef<HTMLDivElement>(null)
-  const [bullets, setBullets] = useState<Array<{ id: string; x: number; y: number; angle: number; speed: number }>>([])
-  const [effects, setEffects] = useState<Array<{ id: string; type: 'blood' | 'muzzle'; x: number; y: number }>>([])
+  const [shooting, setShooting] = useState(false)
   const { toast } = useToast()
-  
-  const { keys, mousePosition } = useGameControls()
+  const { keys } = useGameControls()
+  const { yaw, pointerLockRef, requestPointerLock } = useFPCamera()
 
   // Initialize zombies when game starts
   useEffect(() => {
@@ -41,209 +39,105 @@ export function GameScreen({ onGameOver }: GameScreenProps) {
       })
       return
     }
-
+    setShooting(true)
+    setTimeout(() => setShooting(false), 120)
     dispatch({ type: 'USE_AMMO', payload: 1 })
-    
-    const bullet = {
-      id: Date.now().toString(),
-      x: player.x,
-      y: player.y,
-      angle: player.angle,
-      speed: 12
+    // Check if a zombie is in the center (hit scan)
+    const hitZombie = zombies.find(z => {
+      // Project zombie to screen
+      const dx = z.x - 400
+      const dy = z.y - 300
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      const angleToPlayer = Math.atan2(dx, -dy)
+      const relAngle = angleToPlayer - yaw
+      return Math.abs(relAngle) < 0.18 && distance < 400 && z.isActive
+    })
+    if (hitZombie) {
+      // Damage zombie
+      const newZombies = zombies.map(z =>
+        z.id === hitZombie.id ? { ...z, health: Math.max(0, z.health - 50), isActive: z.health - 50 > 0 } : z
+      )
+      updateZombies(newZombies)
+      addScore(50)
     }
-    
-    setBullets(prev => [...prev, bullet])
-    setEffects(prev => [...prev, { id: Date.now().toString(), type: 'muzzle', x: player.x, y: player.y }])
   }
 
-  // Handle mouse click for shooting
+  // Mouse click to shoot (when pointer locked)
   useEffect(() => {
-    const handleMouseClick = (e: MouseEvent) => {
-      if (e.target === gameAreaRef.current || gameAreaRef.current?.contains(e.target as Node)) {
+    const handleMouseDown = () => {
+      if (document.pointerLockElement === pointerLockRef.current) {
         handleShoot()
       }
     }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
+  }, [player.ammo, zombies, yaw])
 
-    document.addEventListener('click', handleMouseClick)
-    return () => document.removeEventListener('click', handleMouseClick)
-  }, [player.ammo, player.x, player.y, player.angle])
-
-  // Game loop
+  // WASD movement (forward/back/strafe)
   useEffect(() => {
-    const gameLoop = setInterval(() => {
-      // Update player position based on keys
-      const speed = 3
-      let newX = player.x
-      let newY = player.y
+    const speed = 4
+    let { x, y } = player
+    const angle = yaw
+    if (keys.w) {
+      x += Math.sin(angle) * speed
+      y -= Math.cos(angle) * speed
+    }
+    if (keys.s) {
+      x -= Math.sin(angle) * speed
+      y += Math.cos(angle) * speed
+    }
+    if (keys.a) {
+      x -= Math.cos(angle) * speed
+      y -= Math.sin(angle) * speed
+    }
+    if (keys.d) {
+      x += Math.cos(angle) * speed
+      y += Math.sin(angle) * speed
+    }
+    // Clamp to room
+    x = Math.max(100, Math.min(700, x))
+    y = Math.max(100, Math.min(500, y))
+    updatePlayer({ x, y })
+  }, [keys, yaw])
 
-      if (keys.w) newY -= speed
-      if (keys.s) newY += speed
-      if (keys.a) newX -= speed
-      if (keys.d) newX += speed
-
-      // Keep player in bounds
-      newX = Math.max(50, Math.min(750, newX))
-      newY = Math.max(50, Math.min(550, newY))
-
-      // Calculate player angle towards mouse
-      if (gameAreaRef.current && mousePosition) {
-        const rect = gameAreaRef.current.getBoundingClientRect()
-        const centerX = rect.left + rect.width / 2
-        const centerY = rect.top + rect.height / 2
-        const angle = Math.atan2(mousePosition.y - centerY, mousePosition.x - centerX)
-        updatePlayer({ x: newX, y: newY, angle })
-      }
-
-      // Update bullets
-      setBullets(prevBullets => {
-        return prevBullets
-          .map(bullet => ({
-            ...bullet,
-            x: bullet.x + Math.cos(bullet.angle) * bullet.speed,
-            y: bullet.y + Math.sin(bullet.angle) * bullet.speed
-          }))
-          .filter(bullet => 
-            bullet.x > 0 && bullet.x < 800 && 
-            bullet.y > 0 && bullet.y < 600
-          )
-      })
-
-      // Update zombies
-      const updatedZombies = updateZombieAI(zombies, { x: newX, y: newY }, difficulty)
-      updateZombies(updatedZombies)
-
-      // Check collisions
-      const collisionResults = checkCollisions(bullets, updatedZombies, { x: newX, y: newY })
-      
-      if (collisionResults.bulletHits.length > 0) {
-        setBullets(prevBullets => 
-          prevBullets.filter(bullet => 
-            !collisionResults.bulletHits.some(hit => hit.bulletId === bullet.id)
-          )
-        )
-        
-        collisionResults.bulletHits.forEach(hit => {
-          addScore(50)
-          setEffects(prev => [...prev, { id: Date.now().toString(), type: 'blood', x: hit.x, y: hit.y }])
-        })
-      }
-
-      if (collisionResults.zombieAttacks.length > 0) {
-        const totalDamage = collisionResults.zombieAttacks.reduce((sum, attack) => sum + attack.damage, 0)
-        damagePlayer(totalDamage)
-        
-        if (player.health - totalDamage <= 0) {
-          onGameOver()
-        }
-      }
-
-      // Spawn new zombies periodically
-      if (Math.random() < 0.02 * (difficulty === 'easy' ? 0.5 : difficulty === 'hard' ? 2 : 1)) {
-        const newZombies = spawnZombies(1, difficulty)
-        updateZombies([...updatedZombies, ...newZombies])
-      }
-    }, 16) // ~60 FPS
-
-    return () => clearInterval(gameLoop)
-  }, [keys, mousePosition, player, zombies, difficulty, updatePlayer, updateZombies, damagePlayer, addScore, onGameOver, bullets])
-
-  // Clear effects after animation
+  // Zombie AI
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setEffects(prev => prev.slice(-5)) // Keep only last 5 effects
-    }, 100)
-    return () => clearTimeout(timer)
-  }, [effects])
+    const updatedZombies = updateZombieAI(zombies, { x: player.x, y: player.y }, difficulty)
+    updateZombies(updatedZombies)
+    // Check for zombie attacks
+    const closeZombie = zombies.find(z => {
+      const dx = player.x - z.x
+      const dy = player.y - z.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      return dist < 60 && z.isActive
+    })
+    if (closeZombie) {
+      damagePlayer(10)
+      if (player.health - 10 <= 0) {
+        onGameOver()
+      }
+    }
+    // Spawn new zombies
+    if (Math.random() < 0.01 * (difficulty === 'easy' ? 0.5 : difficulty === 'hard' ? 2 : 1)) {
+      const newZombies = spawnZombies(1, difficulty)
+      updateZombies([...zombies, ...newZombies])
+    }
+  }, [player, zombies, difficulty, updateZombies, damagePlayer, onGameOver])
 
   return (
-    <div 
-      ref={gameAreaRef}
-      className="relative w-full h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 overflow-hidden cursor-crosshair"
+    <div
+      ref={pointerLockRef}
+      className="relative w-full h-screen bg-black overflow-hidden cursor-crosshair"
+      tabIndex={0}
+      onClick={requestPointerLock}
     >
-      {/* Room/Background */}
-      <Room />
-      
-      {/* Player */}
-      <Player x={player.x} y={player.y} angle={player.angle} health={player.health} />
-      
-      {/* Zombies */}
+      <RoomFP yaw={yaw} />
       <AnimatePresence>
         {zombies.map(zombie => (
-          zombie.isActive && (
-            <Zombie
-              key={zombie.id}
-              x={zombie.x}
-              y={zombie.y}
-              health={zombie.health}
-              maxHealth={zombie.maxHealth}
-              isActive={zombie.isActive}
-            />
-          )
+          zombie.isActive && <ZombieFP key={zombie.id} zombie={zombie} playerYaw={yaw} />
         ))}
       </AnimatePresence>
-      
-      {/* Bullets */}
-      <AnimatePresence>
-        {bullets.map(bullet => (
-          <motion.div
-            key={bullet.id}
-            className="absolute w-1 h-1 bg-yellow-400 rounded-full shadow-lg"
-            style={{
-              left: bullet.x,
-              top: bullet.y,
-              transform: 'translate(-50%, -50%)',
-            }}
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            exit={{ scale: 0 }}
-          />
-        ))}
-      </AnimatePresence>
-      
-      {/* Effects */}
-      <AnimatePresence>
-        {effects.map(effect => (
-          <motion.div
-            key={effect.id}
-            className={`absolute ${
-              effect.type === 'blood' ? 'w-4 h-4 bg-red-600' : 'w-2 h-2 bg-yellow-400'
-            } rounded-full`}
-            style={{
-              left: effect.x,
-              top: effect.y,
-              transform: 'translate(-50%, -50%)',
-            }}
-            initial={{ scale: 0, opacity: 1 }}
-            animate={{ scale: 1.5, opacity: 0 }}
-            exit={{ scale: 0, opacity: 0 }}
-            transition={{ duration: 0.3 }}
-          />
-        ))}
-      </AnimatePresence>
-      
-      {/* Environmental elements */}
-      <div className="absolute inset-0 pointer-events-none">
-        {/* Atmospheric particles */}
-        {[...Array(30)].map((_, i) => (
-          <motion.div
-            key={i}
-            className="absolute w-px h-px bg-gray-600 opacity-20"
-            style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-            }}
-            animate={{
-              opacity: [0.1, 0.3, 0.1],
-              scale: [0.5, 1, 0.5],
-            }}
-            transition={{
-              duration: 3 + Math.random() * 2,
-              repeat: Infinity,
-              delay: Math.random() * 3,
-            }}
-          />
-        ))}
-      </div>
+      <PlayerGun shooting={shooting} />
     </div>
   )
 }
