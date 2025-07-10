@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, ReactNode } from 'react'
+import { createContext, useContext, useReducer, ReactNode, useCallback } from 'react'
 
 export interface Player {
   x: number
@@ -175,49 +175,49 @@ const GameContext = createContext<GameContextType | undefined>(undefined)
 export function GameProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(gameReducer, initialState)
 
-  const updatePlayer = (updates: Partial<Player>) => {
+  const updatePlayer = useCallback((updates: Partial<Player>) => {
     dispatch({ type: 'UPDATE_PLAYER', payload: updates })
-  }
+  }, [dispatch])
 
-  const updateZombies = (zombies: Zombie[]) => {
+  const updateZombies = useCallback((zombies: Zombie[]) => {
     dispatch({ type: 'UPDATE_ZOMBIES', payload: zombies })
-  }
+  }, [dispatch])
 
-  const damagePlayer = (damage: number) => {
+  const damagePlayer = useCallback((damage: number) => {
     dispatch({ type: 'DAMAGE_PLAYER', payload: damage })
-  }
+  }, [dispatch])
 
-  const healPlayer = (healing: number) => {
+  const healPlayer = useCallback((healing: number) => {
     dispatch({ type: 'HEAL_PLAYER', payload: healing })
-  }
+  }, [dispatch])
 
-  const useAmmo = (amount: number) => {
+  const useAmmo = useCallback((amount: number) => {
     dispatch({ type: 'USE_AMMO', payload: amount })
-  }
+  }, [dispatch])
 
-  const addAmmo = (amount: number) => {
+  const addAmmo = useCallback((amount: number) => {
     dispatch({ type: 'ADD_AMMO', payload: amount })
-  }
+  }, [dispatch])
 
-  const addKeys = (amount: number) => {
+  const addKeys = useCallback((amount: number) => {
     dispatch({ type: 'ADD_KEYS', payload: amount })
-  }
+  }, [dispatch])
 
-  const addScore = (points: number) => {
+  const addScore = useCallback((points: number) => {
     dispatch({ type: 'ADD_SCORE', payload: points })
-  }
+  }, [dispatch])
 
-  const resetGame = () => {
+  const resetGame = useCallback(() => {
     dispatch({ type: 'RESET_GAME' })
-  }
+  }, [dispatch])
 
-  const setDifficulty = (difficulty: 'easy' | 'normal' | 'hard') => {
+  const setDifficulty = useCallback((difficulty: 'easy' | 'normal' | 'hard') => {
     dispatch({ type: 'SET_DIFFICULTY', payload: difficulty })
-  }
+  }, [dispatch])
 
-  const clearRoom = () => {
+  const clearRoom = useCallback(() => {
     dispatch({ type: 'CLEAR_ROOM' })
-  }
+  }, [dispatch])
 
   return (
     <GameContext.Provider value={{

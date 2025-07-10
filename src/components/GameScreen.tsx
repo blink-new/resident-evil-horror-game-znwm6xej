@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { useGame } from '../context/GameContext'
 import { RoomFP } from './RoomFP'
@@ -21,13 +21,19 @@ export function GameScreen({ onGameOver }: GameScreenProps) {
   const { keys } = useGameControls()
   const { yaw, pointerLockRef, requestPointerLock } = useFPCamera()
 
-  // Initialize zombies when game starts
+  const hasSpawned = useRef<{ [key: string]: boolean }>({})
+
+  // Initialize zombies when game starts or difficulty changes
   useEffect(() => {
-    if (zombies.length === 0) {
-      const initialZombies = spawnZombies(3, difficulty)
-      updateZombies(initialZombies)
+    if (!hasSpawned.current[difficulty]) {
+      if (zombies.length === 0) {
+        const initialZombies = spawnZombies(3, difficulty)
+        updateZombies(initialZombies)
+        hasSpawned.current[difficulty] = true
+      }
     }
-  }, [difficulty, zombies.length, updateZombies])
+    // eslint-disable-next-line
+  }, [difficulty])
 
   // Handle shooting
   const handleShoot = () => {
